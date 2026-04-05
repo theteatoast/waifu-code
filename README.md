@@ -6,10 +6,16 @@ By default, it uses `moonshotai/kimi-k2-thinking` for intelligent responses and 
 
 ## Installation
 
-Install globally via npm:
+First, ensure you have the official Claude Code CLI installed:
 
 ```bash
-npm install -g .
+npm install -g @anthropic-ai/claude-code
+```
+
+Then, install the waifu-code CLI globally:
+
+```bash
+npm install -g waifu-code
 ```
 
 ## Usage

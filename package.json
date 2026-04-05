@@ -1,14 +1,19 @@
 {
-  "name": "waifu",
-  "version": "1.0.0",
+  "name": "waifu-code",
+  "version": "1.0.1",
   "description": "Free coding assistant CLI — Claude Code powered by NVIDIA NIM",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
     "waifu": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "dev": "tsc --watch",
     "start": "node dist/cli.js"
   },
