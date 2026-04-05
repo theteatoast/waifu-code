@@ -19,6 +19,7 @@ import {
   type ToolCallDelta,
   mapStopReason,
 } from "./types.js";
+import type { EventDetector } from "../observer/eventDetector.js";
 
 export const NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const DEFAULT_MODEL = "moonshotai/kimi-k2-thinking";
@@ -127,7 +128,8 @@ export async function* streamNimResponse(
   requestData: any,
   config: NimConfig,
   inputTokens: number,
-  requestId?: string
+  requestId?: string,
+  detector?: EventDetector
 ): AsyncGenerator<string> {
   const messageId = `msg_${randomUUID()}`;
   const sse = new SSEBuilder(messageId, requestData.model, inputTokens);
@@ -202,6 +204,7 @@ export async function* streamNimResponse(
 
         // Handle reasoning_content (OpenAI extended format)
         if (delta.reasoning_content) {
+          detector?.onThinking();
           for (const ev of sse.ensureThinkingBlock()) yield ev;
           yield sse.emitThinkingDelta(delta.reasoning_content);
         }
@@ -210,6 +213,7 @@ export async function* streamNimResponse(
         if (delta.content) {
           for (const part of thinkParser.feed(delta.content)) {
             if (part.type === ContentType.THINKING) {
+              detector?.onThinking();
               for (const ev of sse.ensureThinkingBlock()) yield ev;
               yield sse.emitThinkingDelta(part.content);
             } else {

@@ -26,6 +26,10 @@ import {
 } from "./config.js";
 import { startProxyServer, waitForHealth } from "./proxy/server.js";
 import { DEFAULT_MODEL } from "./providers/nim.js";
+import { EventDetector } from "./observer/eventDetector.js";
+import { OverlayRenderer } from "./waifu/overlayRenderer.js";
+
+
 
 const VERSION = "1.0.0";
 
@@ -44,7 +48,9 @@ program
   .option("--model <model>", `Model to use (default: ${DEFAULT_MODEL})`)
   .option("--port <port>", "Proxy server port (default: auto)")
   .option("--proxy-only", "Start proxy server only (don't launch claude)")
+  .option("--no-waifu", "Disable waifu overlay and sounds")
   .option("--verbose", "Enable verbose logging")
+
   .action(async (opts) => {
     const nimKey = resolveNimApiKey(opts.nimKey);
     const model = resolveModel(opts.model);
@@ -74,6 +80,15 @@ program
     // Generate internal auth token
     const authToken = randomUUID();
 
+    // Initialize waifu overlay if enabled
+    const useWaifu = opts.waifu !== false;
+    let detector: EventDetector | undefined;
+    if (useWaifu) {
+      detector = new EventDetector();
+      const renderer = new OverlayRenderer(true);
+      detector.on("event", (ev) => renderer.render(ev as any));
+    }
+
     // Start proxy server
     if (verbose) console.log("[waifu] Starting proxy server...");
 
@@ -82,7 +97,9 @@ program
       model,
       authToken,
       port: opts.port ? parseInt(opts.port, 10) : undefined,
+      detector,
     });
+
 
     console.log(
       `\x1b[32m✓ Proxy started\x1b[0m on http://${proxy.host}:${proxy.port} → NIM (${model})`
@@ -129,7 +146,8 @@ program
         // Also filter out the values for key/model/port
         arg !== opts.nimKey &&
         arg !== opts.model &&
-        arg !== opts.port
+        arg !== opts.port &&
+        arg !== "--no-waifu"
     );
 
     const child = spawn(claudeCmd, claudeArgs, {
@@ -143,6 +161,8 @@ program
       },
       shell: process.platform === "win32",
     });
+
+
 
     child.on("error", (err) => {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {

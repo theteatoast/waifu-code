@@ -14,6 +14,7 @@ export interface ProxyServerOptions {
   authToken: string;
   port?: number;
   host?: string;
+  detector?: import("../observer/eventDetector.js").EventDetector;
 }
 
 export interface RunningProxy {
@@ -59,6 +60,7 @@ export async function startProxyServer(
     },
     authToken: options.authToken,
     model: options.model ?? "moonshotai/kimi-k2.5",
+    detector: options.detector,
   };
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {

@@ -22,6 +22,7 @@ export interface RouteContext {
   nimConfig: NimConfig;
   authToken?: string;
   model: string;
+  detector?: import("../observer/eventDetector.js").EventDetector;
 }
 
 /** Read the full request body as JSON. */
@@ -63,6 +64,7 @@ async function handleMessages(
   res: ServerResponse,
   ctx: RouteContext
 ): Promise<void> {
+  ctx.detector?.onThinking();
   const requestData: MessagesRequest = await readBody(req);
   const requestId = `req_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
@@ -98,10 +100,12 @@ async function handleMessages(
       requestData,
       ctx.nimConfig,
       inputTokens,
-      requestId
+      requestId,
+      ctx.detector
     )) {
       res.write(event);
     }
+    ctx.detector?.setCompletion();
   } catch (err: any) {
     // If headers already sent, we can only close
     console.error(`[waifu] Stream error: ${err.message}`);
@@ -149,14 +153,14 @@ export async function handleRequest(
 ): Promise<void> {
   const url = req.url ?? "/";
   const method = req.method ?? "GET";
-  
+
   if (process.env.WAIFU_VERBOSE) {
     console.log(`\n==== [INCOMING] ${method} ${url} ====\n`);
   }
 
   // Health check doesn't need auth
   const pathname = url.split("?")[0];
-  
+
   if (method === "GET" && pathname === "/health") {
     handleHealth(res);
     return;
