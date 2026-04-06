@@ -2,30 +2,46 @@
  * HTTP route handlers for the proxy server.
  *
  * Handles:
- *   POST /v1/messages          — Streaming messages (main endpoint)
+ *   POST /v1/messages              — Streaming messages (main endpoint)
  *   POST /v1/messages/count_tokens — Token counting
- *   GET  /health               — Health check
- *   GET  /                     — Status
+ *   GET  /health                   — Health check
+ *   GET  /                         — Status
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { streamNimResponse, type NimConfig } from "../providers/nim.js";
 import { validateAuth } from "./auth.js";
 import { tryOptimizations } from "./optimizer.js";
 import { getTokenCount } from "./tokenCounter.js";
 import type { MessagesRequest, MessagesResponse } from "./types.js";
+import type { ProviderName } from "../config.js";
+
+// Provider stream functions
+import { streamNimResponse, type NimConfig } from "../providers/nim.js";
+import { streamOpenRouterResponse, type OpenRouterConfig } from "../providers/openrouter.js";
+import { streamGroqResponse, type GroqConfig } from "../providers/groq.js";
+import { streamOllamaResponse, type OllamaConfig } from "../providers/ollama.js";
+
+// ── Context passed from server.ts ─────────────────────────────────────────────
 
 export interface RouteContext {
-  nimConfig: NimConfig;
-  authToken?: string;
+  provider: ProviderName;
   model: string;
+  apiKey: string | null;
+  authToken?: string;
+  // Provider-specific extras
+  ollamaBaseUrl?: string;
+  openrouterSiteUrl?: string;
+  openrouterSiteName?: string;
   detector?: import("../observer/eventDetector.js").EventDetector;
+  // Legacy — kept for backward compat
+  nimConfig?: NimConfig;
 }
 
-/** Read the full request body as JSON. */
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 async function readBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -36,7 +52,6 @@ async function readBody(req: IncomingMessage): Promise<any> {
         if (!raw) return resolve({});
         resolve(JSON.parse(raw));
       } catch (err) {
-        console.error("[readBody] Raw body string:", Buffer.concat(chunks).toString("utf-8").slice(0, 500));
         reject(new Error("Invalid JSON body"));
       }
     });
@@ -44,12 +59,7 @@ async function readBody(req: IncomingMessage): Promise<any> {
   });
 }
 
-/** Send a JSON response. */
-function sendJson(
-  res: ServerResponse,
-  statusCode: number,
-  data: any
-): void {
+function sendJson(res: ServerResponse, statusCode: number, data: any): void {
   const body = JSON.stringify(data);
   res.writeHead(statusCode, {
     "Content-Type": "application/json",
@@ -58,7 +68,53 @@ function sendJson(
   res.end(body);
 }
 
-/** Handle POST /v1/messages — streaming messages. */
+// ── Provider dispatch ─────────────────────────────────────────────────────────
+
+/**
+ * Return the correct async generator for the configured provider.
+ */
+function streamForProvider(
+  requestData: any,
+  ctx: RouteContext,
+  inputTokens: number,
+  requestId: string
+): AsyncGenerator<string> {
+  const { provider, apiKey, model, detector } = ctx;
+
+  switch (provider) {
+    case "openrouter": {
+      const cfg: OpenRouterConfig = {
+        apiKey: apiKey!,
+        model,
+        siteUrl: ctx.openrouterSiteUrl,
+        siteName: ctx.openrouterSiteName,
+      };
+      return streamOpenRouterResponse(requestData, cfg, inputTokens, requestId, detector);
+    }
+
+    case "groq": {
+      const cfg: GroqConfig = { apiKey: apiKey!, model };
+      return streamGroqResponse(requestData, cfg, inputTokens, requestId, detector);
+    }
+
+    case "ollama": {
+      const cfg: OllamaConfig = {
+        model,
+        baseUrl: ctx.ollamaBaseUrl,
+      };
+      return streamOllamaResponse(requestData, cfg, inputTokens, requestId, detector);
+    }
+
+    case "nim":
+    default: {
+      const cfg: NimConfig = { apiKey: apiKey!, model };
+      return streamNimResponse(requestData, cfg, inputTokens, requestId, detector);
+    }
+  }
+}
+
+// ── Route handlers ────────────────────────────────────────────────────────────
+
 async function handleMessages(
   req: IncomingMessage,
   res: ServerResponse,
@@ -73,21 +129,18 @@ async function handleMessages(
     return;
   }
 
-  // Try optimizations first
   const optimized = tryOptimizations(requestData);
   if (optimized) {
     sendJson(res, 200, optimized);
     return;
   }
 
-  // Calculate input tokens
   const inputTokens = getTokenCount(
     requestData.messages,
     requestData.system,
     requestData.tools
   );
 
-  // Stream SSE response
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -96,25 +149,17 @@ async function handleMessages(
   });
 
   try {
-    for await (const event of streamNimResponse(
-      requestData,
-      ctx.nimConfig,
-      inputTokens,
-      requestId,
-      ctx.detector
-    )) {
+    for await (const event of streamForProvider(requestData, ctx, inputTokens, requestId)) {
       res.write(event);
     }
     ctx.detector?.setCompletion();
   } catch (err: any) {
-    // If headers already sent, we can only close
     console.error(`[waifu] Stream error: ${err.message}`);
   }
 
   res.end();
 }
 
-/** Handle POST /v1/messages/count_tokens — token counting. */
 async function handleCountTokens(
   req: IncomingMessage,
   res: ServerResponse
@@ -125,27 +170,23 @@ async function handleCountTokens(
     requestData.system,
     requestData.tools
   );
-
   sendJson(res, 200, { input_tokens: tokens });
 }
 
-/** Handle GET /health — health check. */
 function handleHealth(res: ServerResponse): void {
   sendJson(res, 200, { status: "healthy" });
 }
 
-/** Handle GET / — root status. */
 function handleRoot(res: ServerResponse, ctx: RouteContext): void {
   sendJson(res, 200, {
     status: "ok",
-    provider: "nvidia_nim",
+    provider: ctx.provider,
     model: ctx.model,
   });
 }
 
-/**
- * Main request router. Called for every incoming HTTP request.
- */
+// ── Main router ───────────────────────────────────────────────────────────────
+
 export async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -158,7 +199,6 @@ export async function handleRequest(
     console.log(`\n==== [INCOMING] ${method} ${url} ====\n`);
   }
 
-  // Health check doesn't need auth
   const pathname = url.split("?")[0];
 
   if (method === "GET" && pathname === "/health") {
@@ -166,7 +206,6 @@ export async function handleRequest(
     return;
   }
 
-  // Auth check for all other routes
   const authError = validateAuth(req, ctx.authToken);
   if (authError) {
     sendJson(res, 401, { error: { message: authError } });

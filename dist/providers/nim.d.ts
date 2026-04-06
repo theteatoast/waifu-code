@@ -1,9 +1,10 @@
 /**
- * NVIDIA NIM provider — sends requests to NVIDIA NIM API.
+ * NVIDIA NIM provider.
  *
- * Converts Anthropic-format requests to OpenAI chat completions format,
- * sends them to NIM, and streams back responses as Anthropic SSE events.
- * Port of Python NvidiaNimProvider + OpenAICompatibleProvider from proxy server.
+ * Thin wrapper around the shared base provider, configured for
+ * NVIDIA's integrate.api.nvidia.com endpoint.
+ *
+ * Get a free key at: https://build.nvidia.com/settings/api-keys
  */
 import type { EventDetector } from "../observer/eventDetector.js";
 export declare const NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
@@ -17,7 +18,4 @@ export interface NimConfig {
     topP?: number;
     baseUrl?: string;
 }
-/**
- * Stream a response from NVIDIA NIM and yield Anthropic-format SSE events.
- */
-export declare function streamNimResponse(requestData: any, config: NimConfig, inputTokens: number, requestId?: string, detector?: EventDetector): AsyncGenerator<string>;
+export declare function streamNimResponse(requestData: unknown, config: NimConfig, inputTokens: number, requestId?: string, detector?: EventDetector): AsyncGenerator<string>;

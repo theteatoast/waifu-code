@@ -1,35 +1,31 @@
 /**
  * Configuration management for waifu CLI.
  *
- * Stores NIM API key and settings in ~/.waifu/config.json.
- * Cross-platform: uses os.homedir() for the config directory.
+ * Stores provider choice, API keys, and model settings in ~/.waifu/config.json.
  */
+export type ProviderName = "nim" | "openrouter" | "groq" | "ollama";
+export declare const PROVIDER_NAMES: ProviderName[];
+export declare const PROVIDER_DEFAULT_MODELS: Record<ProviderName, string>;
+export declare const PROVIDER_KEY_ENV: Record<ProviderName, string[]>;
 export interface WaifuConfig {
-    nimApiKey?: string;
+    provider?: ProviderName;
     model?: string;
+    nimApiKey?: string;
+    openrouterApiKey?: string;
+    groqApiKey?: string;
+    ollamaBaseUrl?: string;
 }
-/** Load config from disk. Returns empty config if file doesn't exist. */
 export declare function loadConfig(): WaifuConfig;
-/** Save config to disk. Creates the config directory if needed. */
 export declare function saveConfig(config: WaifuConfig): void;
-/**
- * Resolve the NIM API key from (in priority order):
- *   1. CLI flag --nim-key
- *   2. Environment variable NIM_API_KEY or NVIDIA_NIM_API_KEY
- *   3. Persisted config file ~/.waifu/config.json
- *
- * Returns the key or null if not found.
- */
-export declare function resolveNimApiKey(cliKey?: string): string | null;
-/**
- * Resolve the model from (in priority order):
- *   1. CLI flag --model
- *   2. Environment variable WAIFU_MODEL
- *   3. Persisted config file
- *   4. Default: moonshotai/kimi-k2.5
- */
-export declare function resolveModel(cliModel?: string): string;
-/** Get the config directory path. */
 export declare function getConfigDir(): string;
-/** Get the config file path. */
 export declare function getConfigFile(): string;
+export declare function resolveProvider(cliProvider?: string): ProviderName;
+export declare function resolveModel(provider: ProviderName, cliModel?: string): string;
+/**
+ * Resolve the API key for a given provider.
+ * Priority: CLI flag → env var(s) → config file → null
+ */
+export declare function resolveApiKey(provider: ProviderName, cliKey?: string): string | null;
+/** Save API key for a specific provider into config. */
+export declare function saveApiKey(provider: ProviderName, key: string): void;
+export declare function resolveNimApiKey(cliKey?: string): string | null;

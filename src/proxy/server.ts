@@ -1,19 +1,21 @@
 /**
  * Embedded proxy HTTP server.
- *
- * Starts a local HTTP server that translates Anthropic API requests
- * to NVIDIA NIM format. Finds a free port automatically.
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleRequest, type RouteContext } from "./routes.js";
+import type { ProviderName } from "../config.js";
 
 export interface ProxyServerOptions {
-  nimApiKey: string;
-  model?: string;
+  provider: ProviderName;
+  model: string;
+  apiKey: string | null;
   authToken: string;
   port?: number;
   host?: string;
+  ollamaBaseUrl?: string;
+  openrouterSiteUrl?: string;
+  openrouterSiteName?: string;
   detector?: import("../observer/eventDetector.js").EventDetector;
 }
 
@@ -24,9 +26,6 @@ export interface RunningProxy {
   stop: () => Promise<void>;
 }
 
-/**
- * Find a free port by binding to port 0 and reading back the assigned port.
- */
 async function findFreePort(host: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = createServer();
@@ -43,10 +42,6 @@ async function findFreePort(host: string): Promise<number> {
   });
 }
 
-/**
- * Start the proxy server.
- * Returns a handle with the port, host, and a stop() function.
- */
 export async function startProxyServer(
   options: ProxyServerOptions
 ): Promise<RunningProxy> {
@@ -54,12 +49,13 @@ export async function startProxyServer(
   const port = options.port ?? (await findFreePort(host));
 
   const ctx: RouteContext = {
-    nimConfig: {
-      apiKey: options.nimApiKey,
-      model: options.model,
-    },
+    provider: options.provider,
+    model: options.model,
+    apiKey: options.apiKey,
     authToken: options.authToken,
-    model: options.model ?? "moonshotai/kimi-k2.5",
+    ollamaBaseUrl: options.ollamaBaseUrl,
+    openrouterSiteUrl: options.openrouterSiteUrl,
+    openrouterSiteName: options.openrouterSiteName,
     detector: options.detector,
   };
 
@@ -79,20 +75,14 @@ export async function startProxyServer(
       const stop = async (): Promise<void> => {
         return new Promise<void>((resolveStop) => {
           server.close(() => resolveStop());
-          // Force-close after 2 seconds
           setTimeout(() => resolveStop(), 2000);
         });
       };
-
       resolve({ port, host, server, stop });
     });
   });
 }
 
-/**
- * Wait for the proxy server to be healthy.
- * Polls the /health endpoint with retries.
- */
 export async function waitForHealth(
   host: string,
   port: number,

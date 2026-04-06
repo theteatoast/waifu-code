@@ -2,14 +2,16 @@
 /**
  * waifu — Free coding assistant CLI.
  *
- * Starts an embedded proxy server that translates Anthropic API
- * requests to NVIDIA NIM, then launches claude-code CLI with
- * the proxy configured automatically.
+ * Starts an embedded proxy server that translates Anthropic API requests
+ * to the configured provider, then launches claude-code with the proxy
+ * configured automatically.
  *
  * Usage:
- *   waifu                      # Use saved NIM key
- *   waifu --nim-key nvapi-xxx  # Provide NIM key (saved for next time)
- *   waifu config               # Show current configuration
- *   waifu config --nim-key xxx # Save NIM key without starting
+ *   waifu                                   # Use saved config
+ *   waifu --provider openrouter --key sk-.. # OpenRouter
+ *   waifu --provider groq --key gsk-...     # Groq
+ *   waifu --provider ollama                 # Local Ollama (no key needed)
+ *   waifu --provider nim --key nvapi-...    # NVIDIA NIM (default)
+ *   waifu config                            # Show current configuration
  */
 export {};
