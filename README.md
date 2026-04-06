@@ -1,8 +1,8 @@
 # waifu CLI
 
-A streamlined proxy and wrapper for Claude Code that transparently routes API requests through your choice of AI provider — no complex setup required.
+A streamlined proxy and wrapper for Claude Code that transparently routes API requests through your choice of AI provider, eliminating the need for complex Python proxy setups.
 
-By default it uses NVIDIA NIM with `moonshotai/kimi-k2-thinking`, but you can switch to OpenRouter, Groq, or a fully local Ollama instance with a single flag.
+By default, it uses NVIDIA NIM with `moonshotai/kimi-k2-thinking` for intelligent responses and natively supports Anthropic streaming APIs.
 
 ## Installation
 
@@ -12,7 +12,9 @@ First, ensure you have the official Claude Code CLI installed:
 npm install -g @anthropic-ai/claude-code
 ```
 
-Then install the waifu-code CLI globally:
+> **Note:** Claude Code has moved to a native installer in recent versions. If you see a prompt to update, follow it — it won't break waifu.
+
+Then, install the waifu-code CLI globally:
 
 ```bash
 npm install -g waifu-code
@@ -20,122 +22,148 @@ npm install -g waifu-code
 
 ## Providers
 
-waifu supports four providers. Pick whichever suits you:
+waifu now supports multiple AI providers. The original NVIDIA NIM is the default, but you can switch with a single flag:
 
-| Provider | Free? | Best for | Get a key |
+| Provider | Free? | Works with Claude Code? | Notes |
 |---|---|---|---|
-| NVIDIA NIM (default) | Free tier | `kimi-k2-thinking`, high token limits | [build.nvidia.com](https://build.nvidia.com/settings/api-keys) |
-| OpenRouter | Free models available | 200+ models, varied size limits | [openrouter.ai/keys](https://openrouter.ai/keys) |
-| Groq | Free tier | Fast inference (note: low TPM limits on free tier (around 6000)) | [console.groq.com/keys](https://console.groq.com/keys) |
-| Ollama | Completely free | 100% local, no internet or API key needed | [ollama.com](https://ollama.com) |
-
-> **Groq note:** The free tier cap (~6k–12k TPM depending on model) is too small for Claude Code's system prompt (~50k tokens). Groq works fine for simple queries but will error on large context operations like `@src`. Use OpenRouter or Ollama for full functionality.
+| NVIDIA NIM (default) | Free tier | ✓ Yes | Best free option, high token limits |
+| OpenRouter | Free models available | ✓ Yes | Recommended — no token size limits |
+| Groq | Free tier | ✗ Partial | TPM too low for large contexts |
+| Ollama | Completely free | ⚠ Depends | Needs 32b+ for reliable tool use |
 
 ## Usage
 
-```bash
-# NVIDIA NIM (original default)
-waifu --provider nim --key nvapi-xxx
-
-# OpenRouter — recommended for free usage
-waifu --provider openrouter --key sk-or-xxx --model openrouter/free
-
-# OpenRouter with a specific model
-waifu --provider openrouter --key sk-or-xxx --model nvidia/nemotron-3-super-120b-a12b:free
-
-# Groq
-waifu --provider groq --key gsk-xxx --model llama-3.1-8b-instant
-
-# Ollama — fully local, no key needed
-waifu --provider ollama --model qwen2.5-coder:7b
-```
-
-Keys are saved on first use to `~/.waifu/config.json` so next time you just run:
+Simply run:
 
 ```bash
 waifu
 ```
 
-## Ollama Setup (local, fully free)
+On first launch, it will prompt you for your API key. This key is saved automatically to `~/.waifu/config.json`.
 
-1. Install Ollama from [ollama.com](https://ollama.com)
+`waifu` will immediately start the integrated TypeScript proxy in the background on a random available port and securely launch your locally-installed `claude-code` CLI natively. No manual configuration or `$env` modifications are required!
 
-2. Pull a model based on your available RAM:
-
-   | RAM | Recommended model | Command |
-   |---|---|---|
-   | 8GB | qwen2.5-coder:7b | `ollama pull qwen2.5-coder:7b` |
-   | 16GB | qwen2.5-coder:14b | `ollama pull qwen2.5-coder:14b` |
-   | 32GB+ | qwen2.5-coder:32b | `ollama pull qwen2.5-coder:32b` |
-
-3. Run waifu:
-
-   ```bash
-   waifu --provider ollama --model qwen2.5-coder:7b
-   ```
-
-On Linux you may need to start Ollama first:
+### Using a different provider
 
 ```bash
-ollama serve  # run in a separate terminal
+# NVIDIA NIM (original default)
+waifu --provider nim --key nvapi-xxx
+
+# OpenRouter — recommended free option
+waifu --provider openrouter --key sk-or-xxx --model openrouter/free
+
+# OpenRouter with a specific model
+waifu --provider openrouter --key sk-or-xxx --model nvidia/nemotron-3-super-120b-a12b:free
+
+# Groq (simple queries only)
+waifu --provider groq --key gsk-xxx --model llama-3.1-8b-instant
+
+# Ollama — fully local, no key needed
+waifu --provider ollama --model qwen2.5:32b
 ```
 
-## Saving your configuration
+### Options
+
+```
+Usage: waifu [options]
+
+Run the Claude Code CLI through your chosen AI provider proxy.
+
+Options:
+  -v, --version              Output the current version
+  --provider <n>             AI provider: nim, openrouter, groq, ollama (default: nim)
+  --key <key>                API key for the chosen provider (saved automatically)
+  --nim-key <key>            NVIDIA NIM API key (shorthand)
+  --openrouter-key <key>     OpenRouter API key (shorthand)
+  --groq-key <key>           Groq API key (shorthand)
+  --model <model>            Model to use (overrides per-provider default)
+  --port <port>              Port to run the proxy on (default: auto)
+  --proxy-only               Start only the proxy server without launching claude
+  --no-waifu                 Disable the waifu overlay
+  --verbose                  Enable verbose logging for debugging
+  -h, --help                 Display help for command
+
+Commands:
+  config                     View or update saved configuration
+  providers                  List all supported providers and default models
+```
+
+### Saving your config
 
 ```bash
-# Save provider and model so you never have to type flags again
+# Save provider + model so you never have to type flags again
 waifu config --provider openrouter --model openrouter/free
 
-# View current config
+# View current saved config
 waifu config
-
-# See all providers and their default models
-waifu providers
 
 # Reset everything
 waifu config --reset
 ```
 
-## All options
+## Provider notes
+
+### OpenRouter
+
+The most reliable free option. `openrouter/free` automatically picks from all currently available free models:
 
 ```bash
-Usage: waifu [options]
-
-Options:
-  --provider <name>        AI provider: nim, openrouter, groq, ollama (default: nim)
-  --key <key>              API key for the chosen provider (saved automatically)
-  --nim-key <key>          NVIDIA NIM API key (shorthand)
-  --openrouter-key <key>   OpenRouter API key (shorthand)
-  --groq-key <key>         Groq API key (shorthand)
-  --model <model>          Model to use (overrides per-provider default)
-  --port <port>            Proxy server port (default: auto)
-  --proxy-only             Start proxy only, don't launch claude
-  --no-waifu               Disable the waifu overlay
-  --verbose                Enable verbose logging
-  -v, --version            Output the current version
-  -h, --help               Display help
-
-Commands:
-  config                   View or update configuration
-  providers                List all supported providers and default models
+waifu --provider openrouter --key sk-or-xxx --model openrouter/free
 ```
+
+Free model names change over time — if you get a 404 on a specific model name, switch to `openrouter/free` or check [openrouter.ai/models](https://openrouter.ai/models) for models marked `:free`.
+
+**Recommended free models that work well with Claude Code:**
+- `nvidia/nemotron-3-super-120b-a12b:free` — large, reads files autonomously, good tool use
+- `deepseek/deepseek-r1:free` — strong reasoning
+- `openrouter/free` — auto-selects, always available
+
+### Groq
+
+Groq's free tier caps at 6k–12k tokens per minute depending on the model. Claude Code's system prompt alone is ~50k tokens, so you'll hit this limit immediately on any large context operation like `@src`.
+
+```
+Error: Request too large — Limit 6000, Requested 53008
+```
+
+Groq works fine for short standalone queries but is not suitable for full Claude Code agentic use on the free tier.
+
+### Ollama (local)
+
+Ollama runs models entirely on your machine — no internet, no API key, no cost.
+
+**Setup:**
+1. Download from [ollama.com](https://ollama.com)
+2. Pull a model: `ollama pull qwen2.5:32b`
+3. On Linux, start the server first: `ollama serve`
+
+**Model guide by RAM:**
+
+| RAM | Recommended | Command |
+|---|---|---|
+| 16GB | `qwen2.5:14b` or `mistral-nemo` | `ollama pull qwen2.5:14b` |
+| 32GB | `qwen2.5:32b` | `ollama pull qwen2.5:32b` |
+| 64GB+ | `qwen2.5:72b` | `ollama pull qwen2.5:72b` |
+
+**Known limitations with small models (below 32b):**
+
+- Models may hallucinate tool names not in Claude Code's schema (e.g. `Glob`, `simplify`, `GloballySearch`) — these silently do nothing
+- Models tend to ask clarifying questions instead of reading files autonomously
+- Tool call formatting is inconsistent
+
+waifu handles one common Ollama issue automatically: some models output tool calls as raw JSON text instead of the structured API format. The proxy detects and converts both formats:
+- Bullet+XML: `● <function=Name><parameter=key>value</parameter>`
+- Plain JSON: `{ "name": "ToolName", "arguments": { ... } }`
+
+For reliable agentic use locally, 32b+ models are recommended.
 
 ## How It Works
 
-waifu starts a local HTTP proxy on a random free port, then launches Claude Code with `ANTHROPIC_BASE_URL` pointing at that proxy. Claude Code never knows the difference.
+This tool is a drop-in replacement for the original Python proxy server. It relies on a hyper-efficient native NodeJS integration:
 
-The proxy:
-
-1. Intercepts Anthropic-format requests from Claude Code
-2. Converts them to OpenAI chat completions format (which all supported providers speak)
-3. Streams the response back as Anthropic-format SSE events
-4. Handles `<think>` tags from reasoning models transparently
-5. Short-circuits trivial requests (quota checks, title generation) locally to save API calls
-
-## Testing the proxy without Claude Code
-
-```bash
-waifu --provider ollama --proxy-only
-```
-
-This prints the proxy URL and auth token so you can test with curl directly.
+1. Intercepts Anthropic Server-Sent Events (SSE).
+2. Converts Claude's messages format to OpenAI-compatible JSON (which all supported providers speak).
+3. Fixes Anthropic API quirks (like `?beta=true` queries and streaming header strictness) seamlessly underneath the hood.
+4. Auto-detects and preserves `<think>` tags returned by supported models without breaking the CLI UI experience.
+5. Short-circuits trivial requests (quota checks, title generation, suggestion mode) locally without hitting any API.
+6. Detects raw-text tool calls from local models and converts them to proper tool use blocks.
