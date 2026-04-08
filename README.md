@@ -80,6 +80,7 @@ Options:
   --port <port>              Port to run the proxy on (default: auto)
   --proxy-only               Start only the proxy server without launching claude
   --no-waifu                 Disable the waifu overlay
+  --no-faaah                 Disable permission prompt sound alert
   --verbose                  Enable verbose logging for debugging
   -h, --help                 Display help for command
 
@@ -100,6 +101,21 @@ waifu config
 # Reset everything
 waifu config --reset
 ```
+
+### Permission prompt sound alert
+
+If `public/faaah.mp3` exists, waifu will play it when Claude Code enters a permission-gated step (for example, waiting for tool-use approval).
+
+- Trigger: starts when a permission event is detected.
+- Repeat: replays every few seconds until the session resumes normal output.
+- Stop: automatically stops when output returns to `thinking`/`idle`/completion.
+- Missing player/file: waifu continues normally and prints a one-time warning.
+- Disable alert: run with `--no-faaah`.
+
+Cross-platform playback backends:
+- Windows: PowerShell `Media.SoundPlayer`
+- macOS: `afplay`
+- Linux: `paplay`, fallback to `aplay`, then `ffplay`
 
 ## Provider notes
 

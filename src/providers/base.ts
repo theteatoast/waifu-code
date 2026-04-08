@@ -150,6 +150,7 @@ export async function* streamProviderResponse(
   let finishReason: string | null = null;
   let usageInfo: any = null;
   let errorOccurred = false;
+  let permissionActive = false;
 
   // Build auth header — skip entirely for Ollama (no key needed)
   const authHeaders: Record<string, string> =
@@ -215,6 +216,10 @@ export async function* streamProviderResponse(
 
         // reasoning_content (extended OpenAI format used by some models)
         if (delta.reasoning_content) {
+          if (permissionActive) {
+            detector?.onPermissionEnd();
+            permissionActive = false;
+          }
           detector?.onThinking();
           for (const ev of sse.ensureThinkingBlock()) yield ev;
           yield sse.emitThinkingDelta(delta.reasoning_content);
@@ -224,6 +229,10 @@ export async function* streamProviderResponse(
         if (delta.content) {
           for (const part of thinkParser.feed(delta.content)) {
             if (part.type === ContentType.THINKING) {
+                if (permissionActive) {
+                  detector?.onPermissionEnd();
+                  permissionActive = false;
+                }
               detector?.onThinking();
               for (const ev of sse.ensureThinkingBlock()) yield ev;
               yield sse.emitThinkingDelta(part.content);
@@ -233,11 +242,19 @@ export async function* streamProviderResponse(
               );
 
               if (filteredText) {
+                  if (permissionActive) {
+                    detector?.onPermissionEnd();
+                    permissionActive = false;
+                  }
                 for (const ev of sse.ensureTextBlock()) yield ev;
                 yield sse.emitTextDelta(filteredText);
               }
 
               for (const toolUse of detectedTools) {
+                  if (!permissionActive) {
+                    detector?.onPermissionStart();
+                    permissionActive = true;
+                  }
                 for (const ev of sse.closeContentBlocks()) yield ev;
                 const blockIdx = sse.blocks.allocateIndex();
                 if (toolUse.name === "Task" && typeof toolUse.input === "object") {
@@ -260,6 +277,10 @@ export async function* streamProviderResponse(
 
         // native tool calls
         if (delta.tool_calls) {
+          if (!permissionActive) {
+            detector?.onPermissionStart();
+            permissionActive = true;
+          }
           for (const ev of sse.closeContentBlocks()) yield ev;
           for (const tc of delta.tool_calls) {
             for (const ev of processToolCall(
@@ -294,9 +315,17 @@ export async function* streamProviderResponse(
   const remaining = thinkParser.flush();
   if (remaining) {
     if (remaining.type === ContentType.THINKING) {
+      if (permissionActive) {
+        detector?.onPermissionEnd();
+        permissionActive = false;
+      }
       for (const ev of sse.ensureThinkingBlock()) yield ev;
       yield sse.emitThinkingDelta(remaining.content);
     } else {
+      if (permissionActive) {
+        detector?.onPermissionEnd();
+        permissionActive = false;
+      }
       for (const ev of sse.ensureTextBlock()) yield ev;
       yield sse.emitTextDelta(remaining.content);
     }
@@ -304,6 +333,10 @@ export async function* streamProviderResponse(
 
   // Flush heuristic tool calls
   for (const toolUse of heuristicParser.flush()) {
+    if (!permissionActive) {
+      detector?.onPermissionStart();
+      permissionActive = true;
+    }
     for (const ev of sse.closeContentBlocks()) yield ev;
     const blockIdx = sse.blocks.allocateIndex();
     if (toolUse.name === "Task" && typeof toolUse.input === "object") {

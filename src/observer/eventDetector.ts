@@ -24,6 +24,18 @@ export class EventDetector extends EventEmitter {
     setTimeout(() => this.updateState("idle"), 1000);
   }
 
+  /** Called when a permission-gated action is waiting for user approval */
+  public onPermissionStart() {
+    this.updateState("permission");
+  }
+
+  /** Called when the model resumes output after a permission gate */
+  public onPermissionEnd() {
+    if (this.currentState === "permission") {
+      this.updateState("thinking");
+    }
+  }
+
 
   private updateState(newState: WaifuEvent) {
     if (this.currentState === newState) return;

@@ -34,6 +34,7 @@ import {
 import { startProxyServer, waitForHealth } from "./proxy/server.js";
 import { EventDetector } from "./observer/eventDetector.js";
 import { OverlayRenderer } from "./waifu/overlayRenderer.js";
+import { PermissionSoundNotifier } from "./waifu/permissionSound.js";
 
 const VERSION = "2.0.0";
 
@@ -62,6 +63,7 @@ program
   .option("--port <port>", "Proxy server port (default: auto)")
   .option("--proxy-only", "Start proxy server only (don't launch claude)")
   .option("--no-waifu", "Disable waifu overlay")
+  .option("--no-faaah", "Disable permission prompt sound alert")
   .option("--verbose", "Enable verbose logging")
 
   .action(async (opts) => {
@@ -105,11 +107,23 @@ program
 
     // ── Waifu overlay ───────────────────────────────────────────────────────
     const useWaifu = opts.waifu !== false;
+    const useFaaah = opts.faaah !== false;
     let detector: EventDetector | undefined;
+    let permissionSound: PermissionSoundNotifier | undefined;
     if (useWaifu) {
       detector = new EventDetector();
       const renderer = new OverlayRenderer(true);
-      detector.on("event", (ev) => renderer.render(ev as any));
+      if (useFaaah) {
+        permissionSound = new PermissionSoundNotifier();
+      }
+      detector.on("event", (ev) => {
+        renderer.render(ev as any);
+        if (ev === "permission") {
+          permissionSound?.start();
+        } else {
+          permissionSound?.stop();
+        }
+      });
     }
 
     // ── Start proxy ─────────────────────────────────────────────────────────
@@ -158,6 +172,7 @@ program
       "--model", opts.model,
       "--port", opts.port,
       "--no-waifu",
+      "--no-faaah",
       "--proxy-only",
       "--verbose",
     ]);
@@ -185,16 +200,19 @@ program
       } else {
         console.error(`\x1b[31m✗ Failed to start claude: ${err.message}\x1b[0m`);
       }
+      permissionSound?.dispose();
       proxy.stop().then(() => process.exit(1));
     });
 
     child.on("exit", async (code) => {
+      permissionSound?.dispose();
       await proxy.stop();
       process.exit(code ?? 0);
     });
 
     const cleanup = async () => {
       child.kill();
+      permissionSound?.dispose();
       await proxy.stop();
       process.exit(0);
     };
