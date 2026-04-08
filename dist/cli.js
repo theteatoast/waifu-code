@@ -2,66 +2,78 @@
 /**
  * waifu — Free coding assistant CLI.
  *
- * Starts an embedded proxy server that translates Anthropic API
- * requests to NVIDIA NIM, then launches claude-code CLI with
- * the proxy configured automatically.
+ * Starts an embedded proxy server that translates Anthropic API requests
+ * to the configured provider, then launches claude-code with the proxy
+ * configured automatically.
  *
  * Usage:
- *   waifu                      # Use saved NIM key
- *   waifu --nim-key nvapi-xxx  # Provide NIM key (saved for next time)
- *   waifu config               # Show current configuration
- *   waifu config --nim-key xxx # Save NIM key without starting
+ *   waifu                                   # Use saved config
+ *   waifu --provider openrouter --key sk-.. # OpenRouter
+ *   waifu --provider groq --key gsk-...     # Groq
+ *   waifu --provider ollama                 # Local Ollama (no key needed)
+ *   waifu --provider nim --key nvapi-...    # NVIDIA NIM (default)
+ *   waifu config                            # Show current configuration
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Command } from "commander";
-import { resolveNimApiKey, resolveModel, loadConfig, saveConfig, getConfigFile, } from "./config.js";
+import { resolveProvider, resolveModel, resolveApiKey, loadConfig, saveConfig, saveApiKey, getConfigFile, PROVIDER_NAMES, PROVIDER_DEFAULT_MODELS, } from "./config.js";
 import { startProxyServer, waitForHealth } from "./proxy/server.js";
-import { DEFAULT_MODEL } from "./providers/nim.js";
 import { EventDetector } from "./observer/eventDetector.js";
 import { OverlayRenderer } from "./waifu/overlayRenderer.js";
-const VERSION = "1.0.0";
+const VERSION = "2.0.0";
 const program = new Command();
 program
     .name("waifu")
-    .description("Free coding assistant — Claude Code powered by NVIDIA NIM")
+    .description("Free coding assistant — Claude Code powered by your choice of AI provider")
     .version(VERSION)
     .enablePositionalOptions()
     .passThroughOptions();
-// ── Main command (default) ──
+// ── Main command ──────────────────────────────────────────────────────────────
 program
-    .option("--nim-key <key>", "NVIDIA NIM API key")
-    .option("--model <model>", `Model to use (default: ${DEFAULT_MODEL})`)
+    .option("--provider <name>", `AI provider to use: ${PROVIDER_NAMES.join(", ")} (default: nim)`)
+    .option("--key <key>", "API key for the chosen provider (saved automatically)")
+    // Legacy per-provider key flags for muscle memory
+    .option("--nim-key <key>", "NVIDIA NIM API key (shorthand)")
+    .option("--openrouter-key <key>", "OpenRouter API key (shorthand)")
+    .option("--groq-key <key>", "Groq API key (shorthand)")
+    .option("--model <model>", "Model to use (overrides per-provider default)")
     .option("--port <port>", "Proxy server port (default: auto)")
     .option("--proxy-only", "Start proxy server only (don't launch claude)")
-    .option("--no-waifu", "Disable waifu overlay and sounds")
+    .option("--no-waifu", "Disable waifu overlay")
     .option("--verbose", "Enable verbose logging")
     .action(async (opts) => {
-    const nimKey = resolveNimApiKey(opts.nimKey);
-    const model = resolveModel(opts.model);
-    const verbose = opts.verbose ?? false;
-    if (!nimKey) {
-        console.error("\x1b[31m✗ No NVIDIA NIM API key found.\x1b[0m\n\n" +
-            "Provide your key in one of these ways:\n" +
-            "  waifu --nim-key nvapi-xxx\n" +
-            "  waifu config --nim-key nvapi-xxx\n" +
-            "  export NIM_API_KEY=nvapi-xxx\n\n" +
-            "Get a free key at: \x1b[36mhttps://build.nvidia.com/settings/api-keys\x1b[0m");
+    // ── Resolve provider ────────────────────────────────────────────────────
+    const provider = resolveProvider(opts.provider);
+    // ── Resolve API key ─────────────────────────────────────────────────────
+    // Accept --key or the legacy per-provider shorthand flags
+    const cliKey = opts.key ??
+        (provider === "nim" ? opts.nimKey : undefined) ??
+        (provider === "openrouter" ? opts.openrouterKey : undefined) ??
+        (provider === "groq" ? opts.groqKey : undefined);
+    const apiKey = resolveApiKey(provider, cliKey);
+    if (provider !== "ollama" && !apiKey) {
+        console.error(`\x1b[31m✗ No API key found for provider "${provider}".\x1b[0m\n\n` +
+            keyHelpText(provider));
         process.exit(1);
     }
-    // Save the key for next time if provided via CLI
-    if (opts.nimKey) {
-        const config = loadConfig();
-        config.nimApiKey = opts.nimKey;
+    // ── Resolve model ───────────────────────────────────────────────────────
+    const model = resolveModel(provider, opts.model);
+    const verbose = opts.verbose ?? false;
+    // ── Persist key if supplied via CLI ─────────────────────────────────────
+    if (cliKey && provider !== "ollama") {
+        saveApiKey(provider, cliKey);
+        const cfg = loadConfig();
+        cfg.provider = provider;
         if (opts.model)
-            config.model = opts.model;
-        saveConfig(config);
+            cfg.model = opts.model;
+        saveConfig(cfg);
         if (verbose)
             console.log(`[waifu] Config saved to ${getConfigFile()}`);
     }
-    // Generate internal auth token
+    // ── Auth token for proxy ────────────────────────────────────────────────
     const authToken = randomUUID();
-    // Initialize waifu overlay if enabled
+    // ── Waifu overlay ───────────────────────────────────────────────────────
     const useWaifu = opts.waifu !== false;
     let detector;
     if (useWaifu) {
@@ -69,18 +81,18 @@ program
         const renderer = new OverlayRenderer(true);
         detector.on("event", (ev) => renderer.render(ev));
     }
-    // Start proxy server
+    // ── Start proxy ─────────────────────────────────────────────────────────
     if (verbose)
-        console.log("[waifu] Starting proxy server...");
+        console.log(`[waifu] Starting proxy (provider: ${provider}, model: ${model})...`);
     const proxy = await startProxyServer({
-        nimApiKey: nimKey,
+        provider,
         model,
+        apiKey,
         authToken,
         port: opts.port ? parseInt(opts.port, 10) : undefined,
         detector,
     });
-    console.log(`\x1b[32m✓ Proxy started\x1b[0m on http://${proxy.host}:${proxy.port} → NIM (${model})`);
-    // Wait for health check
+    console.log(`\x1b[32m✓ Proxy started\x1b[0m on http://${proxy.host}:${proxy.port} → ${provider} (${model})`);
     const healthy = await waitForHealth(proxy.host, proxy.port);
     if (!healthy) {
         console.error("\x1b[31m✗ Proxy health check failed\x1b[0m");
@@ -91,39 +103,32 @@ program
         console.log("\n\x1b[33mProxy-only mode.\x1b[0m Use these env vars with claude:\n" +
             `  ANTHROPIC_AUTH_TOKEN=${authToken}\n` +
             `  ANTHROPIC_BASE_URL=http://${proxy.host}:${proxy.port}\n`);
-        // Keep running until interrupted
-        process.on("SIGINT", async () => {
-            console.log("\n[waifu] Shutting down...");
-            await proxy.stop();
-            process.exit(0);
-        });
-        process.on("SIGTERM", async () => {
-            await proxy.stop();
-            process.exit(0);
-        });
+        process.on("SIGINT", async () => { await proxy.stop(); process.exit(0); });
+        process.on("SIGTERM", async () => { await proxy.stop(); process.exit(0); });
         return;
     }
-    // Launch claude-code CLI
+    // ── Launch claude-code ──────────────────────────────────────────────────
     if (verbose)
         console.log("[waifu] Launching claude...");
-    const claudeCmd = "claude";
-    const claudeArgs = process.argv.slice(2).filter((arg) => !arg.startsWith("--nim-key") &&
-        !arg.startsWith("--model") &&
-        !arg.startsWith("--port") &&
-        !arg.startsWith("--proxy-only") &&
-        !arg.startsWith("--verbose") &&
-        // Also filter out the values for key/model/port
-        arg !== opts.nimKey &&
-        arg !== opts.model &&
-        arg !== opts.port &&
-        arg !== "--no-waifu");
-    const child = spawn(claudeCmd, claudeArgs, {
+    const skipArgs = new Set([
+        "--provider", opts.provider,
+        "--key", cliKey,
+        "--nim-key", opts.nimKey,
+        "--openrouter-key", opts.openrouterKey,
+        "--groq-key", opts.groqKey,
+        "--model", opts.model,
+        "--port", opts.port,
+        "--no-waifu",
+        "--proxy-only",
+        "--verbose",
+    ]);
+    const claudeArgs = process.argv.slice(2).filter((arg) => !skipArgs.has(arg));
+    const child = spawn("claude", claudeArgs, {
         stdio: "inherit",
         env: {
             ...process.env,
             ANTHROPIC_AUTH_TOKEN: authToken,
             ANTHROPIC_BASE_URL: `http://${proxy.host}:${proxy.port}`,
-            // Disable the update check (we're not the official CLI)
             CLAUDE_CODE_SKIP_UPDATE_CHECK: "1",
         },
         shell: process.platform === "win32",
@@ -143,7 +148,6 @@ program
         await proxy.stop();
         process.exit(code ?? 0);
     });
-    // Cleanup on signals
     const cleanup = async () => {
         child.kill();
         await proxy.stop();
@@ -152,11 +156,15 @@ program
     process.on("SIGINT", cleanup);
     process.on("SIGTERM", cleanup);
 });
-// ── Config subcommand ──
+// ── Config subcommand ─────────────────────────────────────────────────────────
 program
     .command("config")
     .description("View or update waifu configuration")
+    .option("--provider <name>", "Set default provider")
+    .option("--key <key>", "Set API key for the current/specified provider")
     .option("--nim-key <key>", "Set NVIDIA NIM API key")
+    .option("--openrouter-key <key>", "Set OpenRouter API key")
+    .option("--groq-key <key>", "Set Groq API key")
     .option("--model <model>", "Set default model")
     .option("--reset", "Reset all configuration")
     .action((opts) => {
@@ -165,24 +173,106 @@ program
         console.log("✓ Configuration reset.");
         return;
     }
-    if (opts.nimKey || opts.model) {
-        const config = loadConfig();
-        if (opts.nimKey)
-            config.nimApiKey = opts.nimKey;
-        if (opts.model)
-            config.model = opts.model;
-        saveConfig(config);
+    const cfg = loadConfig();
+    let changed = false;
+    if (opts.provider) {
+        cfg.provider = opts.provider;
+        changed = true;
+    }
+    if (opts.model) {
+        cfg.model = opts.model;
+        changed = true;
+    }
+    if (opts.nimKey) {
+        cfg.nimApiKey = opts.nimKey;
+        changed = true;
+    }
+    if (opts.openrouterKey) {
+        cfg.openrouterApiKey = opts.openrouterKey;
+        changed = true;
+    }
+    if (opts.groqKey) {
+        cfg.groqApiKey = opts.groqKey;
+        changed = true;
+    }
+    if (opts.key) {
+        const provider = cfg.provider ?? "nim";
+        saveApiKey(provider, opts.key);
+        changed = true;
+    }
+    if (changed) {
+        saveConfig(cfg);
         console.log(`✓ Configuration saved to ${getConfigFile()}`);
         return;
     }
     // Show current config
-    const config = loadConfig();
-    const key = config.nimApiKey;
+    const activeProvider = cfg.provider ?? "nim";
+    const mask = (k) => k ? k.slice(0, 6) + "..." + k.slice(-4) : "\x1b[33m(not set)\x1b[0m";
     console.log("\n\x1b[1mwaifu configuration\x1b[0m");
-    console.log(`  Config file: ${getConfigFile()}`);
-    console.log(`  NIM API Key: ${key ? key.slice(0, 8) + "..." + key.slice(-4) : "\x1b[33m(not set)\x1b[0m"}`);
-    console.log(`  Model:       ${config.model ?? `${DEFAULT_MODEL} (default)`}`);
+    console.log(`  Config file : ${getConfigFile()}`);
+    console.log(`  Provider    : ${activeProvider}`);
+    console.log(`  Model       : ${cfg.model ?? `${PROVIDER_DEFAULT_MODELS[activeProvider]} (default)`}`);
+    console.log(`\n  API Keys:`);
+    console.log(`    NIM         : ${mask(cfg.nimApiKey)}`);
+    console.log(`    OpenRouter  : ${mask(cfg.openrouterApiKey)}`);
+    console.log(`    Groq        : ${mask(cfg.groqApiKey)}`);
+    console.log(`    Ollama      : (no key needed)`);
     console.log("");
 });
+// ── Providers subcommand ──────────────────────────────────────────────────────
+program
+    .command("providers")
+    .description("List all supported providers and their default models")
+    .action(() => {
+    console.log("\n\x1b[1mSupported providers\x1b[0m\n");
+    const info = {
+        nim: {
+            url: "https://build.nvidia.com/settings/api-keys",
+            free: "Free tier available",
+        },
+        openrouter: {
+            url: "https://openrouter.ai/keys",
+            free: "Free models available",
+        },
+        groq: {
+            url: "https://console.groq.com/keys",
+            free: "Free tier available",
+        },
+        ollama: {
+            url: "https://ollama.com",
+            free: "Fully local — no API key needed",
+        },
+    };
+    for (const name of PROVIDER_NAMES) {
+        const { url, free } = info[name];
+        console.log(`  \x1b[36m${name.padEnd(12)}\x1b[0m default: ${PROVIDER_DEFAULT_MODELS[name]}`);
+        console.log(`               ${free}`);
+        console.log(`               Keys: \x1b[2m${url}\x1b[0m`);
+        console.log("");
+    }
+    console.log("  Use a provider:  waifu --provider <name>");
+    console.log("  Save a key:      waifu config --<name>-key <key>\n");
+});
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function keyHelpText(provider) {
+    const sources = {
+        nim: "Provide your key:\n" +
+            "  waifu --provider nim --key nvapi-xxx\n" +
+            "  export NIM_API_KEY=nvapi-xxx\n\n" +
+            "Get a free key at: \x1b[36mhttps://build.nvidia.com/settings/api-keys\x1b[0m",
+        openrouter: "Provide your key:\n" +
+            "  waifu --provider openrouter --key sk-or-xxx\n" +
+            "  export OPENROUTER_API_KEY=sk-or-xxx\n\n" +
+            "Get a free key at: \x1b[36mhttps://openrouter.ai/keys\x1b[0m",
+        groq: "Provide your key:\n" +
+            "  waifu --provider groq --key gsk-xxx\n" +
+            "  export GROQ_API_KEY=gsk-xxx\n\n" +
+            "Get a free key at: \x1b[36mhttps://console.groq.com/keys\x1b[0m",
+        ollama: "Ollama runs locally and needs no API key.\n" +
+            "Install from: \x1b[36mhttps://ollama.com\x1b[0m\n" +
+            "Then run: ollama pull qwen2.5-coder:7b",
+    };
+    return sources[provider] ?? "";
+}
 program.parse();
 //# sourceMappingURL=cli.js.map

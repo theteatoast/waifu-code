@@ -1,14 +1,8 @@
 /**
  * Embedded proxy HTTP server.
- *
- * Starts a local HTTP server that translates Anthropic API requests
- * to NVIDIA NIM format. Finds a free port automatically.
  */
 import { createServer } from "node:http";
 import { handleRequest } from "./routes.js";
-/**
- * Find a free port by binding to port 0 and reading back the assigned port.
- */
 async function findFreePort(host) {
     return new Promise((resolve, reject) => {
         const srv = createServer();
@@ -25,20 +19,17 @@ async function findFreePort(host) {
         srv.on("error", reject);
     });
 }
-/**
- * Start the proxy server.
- * Returns a handle with the port, host, and a stop() function.
- */
 export async function startProxyServer(options) {
     const host = options.host ?? "127.0.0.1";
     const port = options.port ?? (await findFreePort(host));
     const ctx = {
-        nimConfig: {
-            apiKey: options.nimApiKey,
-            model: options.model,
-        },
+        provider: options.provider,
+        model: options.model,
+        apiKey: options.apiKey,
         authToken: options.authToken,
-        model: options.model ?? "moonshotai/kimi-k2.5",
+        ollamaBaseUrl: options.ollamaBaseUrl,
+        openrouterSiteUrl: options.openrouterSiteUrl,
+        openrouterSiteName: options.openrouterSiteName,
         detector: options.detector,
     };
     const server = createServer((req, res) => {
@@ -56,7 +47,6 @@ export async function startProxyServer(options) {
             const stop = async () => {
                 return new Promise((resolveStop) => {
                     server.close(() => resolveStop());
-                    // Force-close after 2 seconds
                     setTimeout(() => resolveStop(), 2000);
                 });
             };
@@ -64,10 +54,6 @@ export async function startProxyServer(options) {
         });
     });
 }
-/**
- * Wait for the proxy server to be healthy.
- * Polls the /health endpoint with retries.
- */
 export async function waitForHealth(host, port, maxRetries = 30, intervalMs = 100) {
     for (let i = 0; i < maxRetries; i++) {
         try {

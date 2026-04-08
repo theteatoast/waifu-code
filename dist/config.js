@@ -1,15 +1,31 @@
 /**
  * Configuration management for waifu CLI.
  *
- * Stores NIM API key and settings in ~/.waifu/config.json.
- * Cross-platform: uses os.homedir() for the config directory.
+ * Stores provider choice, API keys, and model settings in ~/.waifu/config.json.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_MODEL as NIM_DEFAULT_MODEL } from "./providers/nim.js";
+import { OPENROUTER_DEFAULT_MODEL } from "./providers/openrouter.js";
+import { GROQ_DEFAULT_MODEL } from "./providers/groq.js";
+import { OLLAMA_DEFAULT_MODEL } from "./providers/ollama.js";
+export const PROVIDER_NAMES = ["nim", "openrouter", "groq", "ollama"];
+export const PROVIDER_DEFAULT_MODELS = {
+    nim: NIM_DEFAULT_MODEL,
+    openrouter: OPENROUTER_DEFAULT_MODEL,
+    groq: GROQ_DEFAULT_MODEL,
+    ollama: OLLAMA_DEFAULT_MODEL,
+};
+export const PROVIDER_KEY_ENV = {
+    nim: ["NIM_API_KEY", "NVIDIA_NIM_API_KEY"],
+    openrouter: ["OPENROUTER_API_KEY"],
+    groq: ["GROQ_API_KEY"],
+    ollama: [], // no key needed
+};
+// ── Persistence ───────────────────────────────────────────────────────────────
 const CONFIG_DIR = join(homedir(), ".waifu");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
-/** Load config from disk. Returns empty config if file doesn't exist. */
 export function loadConfig() {
     try {
         if (existsSync(CONFIG_FILE)) {
@@ -22,52 +38,73 @@ export function loadConfig() {
     }
     return {};
 }
-/** Save config to disk. Creates the config directory if needed. */
 export function saveConfig(config) {
     if (!existsSync(CONFIG_DIR)) {
         mkdirSync(CONFIG_DIR, { recursive: true });
     }
     writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + "\n", "utf-8");
 }
-/**
- * Resolve the NIM API key from (in priority order):
- *   1. CLI flag --nim-key
- *   2. Environment variable NIM_API_KEY or NVIDIA_NIM_API_KEY
- *   3. Persisted config file ~/.waifu/config.json
- *
- * Returns the key or null if not found.
- */
-export function resolveNimApiKey(cliKey) {
-    if (cliKey)
-        return cliKey;
-    if (process.env.NIM_API_KEY)
-        return process.env.NIM_API_KEY;
-    if (process.env.NVIDIA_NIM_API_KEY)
-        return process.env.NVIDIA_NIM_API_KEY;
-    const config = loadConfig();
-    return config.nimApiKey ?? null;
+export function getConfigDir() { return CONFIG_DIR; }
+export function getConfigFile() { return CONFIG_FILE; }
+// ── Resolvers ─────────────────────────────────────────────────────────────────
+export function resolveProvider(cliProvider) {
+    const raw = cliProvider ?? process.env.WAIFU_PROVIDER ?? loadConfig().provider;
+    if (raw && PROVIDER_NAMES.includes(raw)) {
+        return raw;
+    }
+    // Auto-detect from available keys
+    const cfg = loadConfig();
+    if (cfg.groqApiKey || process.env.GROQ_API_KEY)
+        return "groq";
+    if (cfg.openrouterApiKey || process.env.OPENROUTER_API_KEY)
+        return "openrouter";
+    return "nim"; // default
 }
-/**
- * Resolve the model from (in priority order):
- *   1. CLI flag --model
- *   2. Environment variable WAIFU_MODEL
- *   3. Persisted config file
- *   4. Default: moonshotai/kimi-k2.5
- */
-export function resolveModel(cliModel) {
+export function resolveModel(provider, cliModel) {
     if (cliModel)
         return cliModel;
     if (process.env.WAIFU_MODEL)
         return process.env.WAIFU_MODEL;
-    const config = loadConfig();
-    return config.model ?? "moonshotai/kimi-k2-thinking";
+    return loadConfig().model ?? PROVIDER_DEFAULT_MODELS[provider];
 }
-/** Get the config directory path. */
-export function getConfigDir() {
-    return CONFIG_DIR;
+/**
+ * Resolve the API key for a given provider.
+ * Priority: CLI flag → env var(s) → config file → null
+ */
+export function resolveApiKey(provider, cliKey) {
+    if (cliKey)
+        return cliKey;
+    for (const envVar of PROVIDER_KEY_ENV[provider]) {
+        if (process.env[envVar])
+            return process.env[envVar];
+    }
+    const cfg = loadConfig();
+    switch (provider) {
+        case "nim": return cfg.nimApiKey ?? null;
+        case "openrouter": return cfg.openrouterApiKey ?? null;
+        case "groq": return cfg.groqApiKey ?? null;
+        case "ollama": return null; // no key
+    }
 }
-/** Get the config file path. */
-export function getConfigFile() {
-    return CONFIG_FILE;
+/** Save API key for a specific provider into config. */
+export function saveApiKey(provider, key) {
+    const cfg = loadConfig();
+    switch (provider) {
+        case "nim":
+            cfg.nimApiKey = key;
+            break;
+        case "openrouter":
+            cfg.openrouterApiKey = key;
+            break;
+        case "groq":
+            cfg.groqApiKey = key;
+            break;
+        case "ollama": break;
+    }
+    saveConfig(cfg);
+}
+// Keep backward-compat alias for old code that reads nimApiKey directly
+export function resolveNimApiKey(cliKey) {
+    return resolveApiKey("nim", cliKey);
 }
 //# sourceMappingURL=config.js.map
